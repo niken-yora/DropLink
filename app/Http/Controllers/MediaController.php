@@ -5,81 +5,103 @@ namespace App\Http\Controllers;
 use App\Models\Media;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage; // <-- Wajib ditambahin buat ngecek file fisik
+use Illuminate\Support\Facades\Storage;
 
 class MediaController extends Controller
 {
-    // 1. Menampilkan Dashboard dan Daftar File (Read)
+    /**
+     * 1. FUNGSI INDEX - Si Pustakawan
+     * Nyiapin data file untuk ditampilin di tabel dashboard
+     */
     public function index()
     {
-        // Ambil semua file milik user yang sedang login, urutkan dari yang terbaru
+        // Ambil semua file milik user yang lagi login, urutkan dari yang terbaru
         $all_media = Media::where('user_id', Auth::id())->latest()->get();
         
         return view('dashboard', compact('all_media'));
     }
 
-    // 2. Menyimpan File Baru (Create) - Ini kodinganmu yang sudah aman
+    /**
+     * 2. FUNGSI STORE - Si Satpam Pintu Masuk
+     * Menerima, memvalidasi, dan menyimpan file yang di-upload
+     */
     public function store(Request $request)
     {
-        // Aturan: format tetap ada pdf, tanpa mov/webm, ukuran max 100MB
+        // Validasi: Maksimal 100MB (102400 KB), tambah izin format PDF
         $request->validate([
             'media' => 'required|file|mimes:jpg,jpeg,png,webp,mp4,pdf|max:102400',
             'description' => 'nullable|string|max:255',
             'visibility' => 'required|in:public,private',
         ]);
 
-
         $file = $request->file('media');
-        $path = $file->store('private_media');
+        
+        // Simpan data asli file
+        $originalName = $file->getClientOriginalName();
+        $mimeType = $file->getClientMimeType();
+        $fileSize = $file->getSize();
+        
+        // Enkripsi nama file jadi acak dan simpan di folder 'storage/app/private_media'
+        $fileName = $file->hashName();
+        $file->storeAs('private_media', $fileName, 'local');
 
+        // Catat detail file ke database
         Media::create([
             'user_id' => Auth::id(),
-            'file_name' => $path,
-            'original_name' => $file->getClientOriginalName(),
-            'mime_type' => $file->getClientMimeType(),
-            'file_size' => $file->getSize(),
+            'original_name' => $originalName,
+            'file_name' => $fileName,
+            'mime_type' => $mimeType,
+            'file_size' => $fileSize,
             'description' => $request->description,
             'visibility' => $request->visibility,
         ]);
 
-        return back()->with('success', 'File berhasil di-upload ');
+        // Balik ke dashboard bawa pesan sukses
+        return redirect()->route('dashboard')->with('success', 'Mantap! File berhasil di-upload.');
     }
 
-    // 3. Menampilkan File Fisik (Show/Stream) - "The Security Guard"
+    /**
+     * 3. FUNGSI SHOW - Si Penjaga Brankas
+     * Ngatur siapa yang boleh liat file via link browser
+     */
     public function show(Media $media)
     {
-        // Otorisasi: Tolak jika file ini private dan yang akses BUKAN pemiliknya
-        if ($media->visibility !== 'public' && $media->user_id !== Auth::id()) {
-            abort(403, 'Akses Ditolak: Anda tidak memiliki izin untuk melihat file ini.');
+        // Otorisasi: Tolak kalau file private tapi yang buka bukan yang punya
+        if ($media->visibility === 'private' && $media->user_id !== Auth::id()) {
+            abort(403, 'Maaf, file ini bersifat rahasia.');
         }
 
-        $path = $media->file_name;
-
-        // Cek apakah file fisiknya beneran ada di server
-        if (!Storage::exists($path)) {
-            abort(404, 'File ada di server ini.');
+        // Cek Gudang: Tolak kalau file fisiknya nggak ada di server
+        if (!Storage::disk('local')->exists('private_media/' . $media->file_name)) {
+            abort(404, 'File tidak ditemukan di server.');
         }
 
-        // Tampilkan file ke browser (Streaming file dari folder rahasia)
-        return response()->file(storage_path('app/' . $path));
+        // Delivery: Gunakan fungsi response bawaan Storage biar path-nya 100% akurat di Windows/Laragon
+        return Storage::disk('local')->response('private_media/' . $media->file_name, $media->original_name, [
+            'Content-Type' => $media->mime_type
+        ]);
     }
-    // 4. Menghapus File (Delete)
+
+    /**
+     * 4. FUNGSI DESTROY - Si Petugas Kebersihan
+     * Menghapus file fisik dari server sekaligus datanya dari database
+     */
     public function destroy(Media $media)
     {
-        // SECURITY: Pastikan cuma pemilik file yang bisa hapus
+        // Verifikasi: Pastikan yang mau ngehapus adalah pemilik aslinya
         if ($media->user_id !== Auth::id()) {
-            abort(403, 'Akses Ditolak: Anda tidak bisa menghapus file orang lain.');
+            abort(403, 'Akses ditolak! Anda tidak berhak menghapus file ini.');
         }
 
-        // Hapus file fisiknya dari folder server (Biar storage gak penuh)
-        if (Storage::exists($media->file_name)) {
-            Storage::delete($media->file_name);
+        // Hapus file fisiknya biar hardisk server nggak bengkak
+        if (Storage::disk('local')->exists('private_media/' . $media->file_name)) {
+            Storage::disk('local')->delete('private_media/' . $media->file_name);
         }
 
-        // Hapus datanya dari database
+        // Hapus catatannya dari database
         $media->delete();
 
-        return back()->with('success', 'File berhasil dihapus permanen!');
-    } 
-
+        // Balik ke dashboard bawa pesan sukses
+        return redirect()->route('dashboard')->with('success', 'File berhasil dihapus permanen.');
+    }
 }
