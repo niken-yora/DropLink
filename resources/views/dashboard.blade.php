@@ -37,6 +37,7 @@
                     </div>
 
                     <div class="leading-tight">
+
                         <p class="font-bold text-gray-800 text-sm">
                             {{ Auth::user()->name }}
                         </p>
@@ -44,9 +45,22 @@
                         <p class="text-xs text-gray-500">
                             {{ Auth::user()->email }}
                         </p>
+
                     </div>
 
                 </div>
+
+                <!-- ADMIN PANEL -->
+                @if(Auth::user()->role === 'admin')
+
+                    <a
+                        href="{{ route('admin.dashboard') }}"
+                        class="px-5 py-2 rounded-xl bg-gradient-to-r  bg-yellow-500 hover:bg-yellow-600 text-white font-semibold shadow-md hover:shadow-lg transition-all duration-300 transform hover:-translate-y-0.5"
+                    >
+                         Admin Panel
+                    </a>
+
+                @endif
 
                 <!-- LOGOUT -->
                 <form method="POST" action="{{ route('logout') }}">
